@@ -57,9 +57,11 @@ const CONVENCIONES: Record<string, string> = {
   '4': 'BS',
   '5': 'BC',
   '6': 'IP',
+  '7': 'EPP',
+  '8': 'IP',
 }
 
-/** Índices de columnas (0-based) en informe_pendientes */
+/** Índices de columnas (0-based) en informe_pendientes — formato "PEDIDOS DE VENDEDORES POR CLIENTES" */
 const COL_P = {
   VENDED:          0,
   NOMBRE_VENDEDOR: 1,
@@ -76,9 +78,12 @@ const COL_P = {
   VALOR_PEDIDO:    12,
   CANT_ENTREGA:    13,
   VALOR_ENTREGADO: 14,
-  FECHA:           15,  // fecha entrega parcial (Excel serial o "0000/00/00")
+  FECHA:           15,  // fecha entrega parcial
   CANT_PENDIENTE:  16,
 } as const
+
+/** Fila 2 esperada en informe_pendientes. Lanzar error si es otro reporte. */
+const PENDIENTES_TITULO = 'PEDIDOS DE VENDEDORES POR CLIENTES'
 
 /** Índices de columnas (0-based) en auxiliar — iguales para SLL (37 cols) y RV (30 cols) */
 const COL_A = {
@@ -160,7 +165,8 @@ function excelDate(v: unknown): Date | null {
 
 /**
  * Elimina filas de subtotales del informe_pendientes.
- * Condición: col A (VENDED) empieza con "Total" O col C (NIT) empieza con "Total".
+ * Condición: col VENDED empieza con "Total" O col NIT empieza con "Total",
+ * o ambas vacías.
  */
 function filterPendientes(rows: unknown[][]): unknown[][] {
   return rows.filter(row => {
@@ -269,12 +275,25 @@ function parsePendientes(
   warnings: string[]
 ): PedidoParsed[] {
   const allRows = readRows(buffer)
+
+  // Validar tipo de reporte: buscar el título en las primeras 6 filas
+  const hasTitle = allRows.slice(0, 6).some(row =>
+    row.some(cell => toStr(cell).includes(PENDIENTES_TITULO))
+  )
+  if (!hasTitle) {
+    const found = toStr(allRows[1]?.[0]) || '(vacío)'
+    throw new Error(
+      `[${empresa.toUpperCase()}] Reporte incorrecto: se esperaba "${PENDIENTES_TITULO}". ` +
+      `Fila 2 contiene: "${found}". Sube el informe correcto desde SIIGO.`
+    )
+  }
+
   const dataRows = filterPendientes(allRows.slice(SIIGO_DATA_START))
   const results: PedidoParsed[] = []
 
   for (const row of dataRows) {
-    const cantPedida = toNum(row[COL_P.CANT_PEDIDA])
-    const valorPedido = toNum(row[COL_P.VALOR_PEDIDO])
+    const cantPedida    = toNum(row[COL_P.CANT_PEDIDA])
+    const valorPedido   = toNum(row[COL_P.VALOR_PEDIDO])
     const cantPendiente = toNum(row[COL_P.CANT_PENDIENTE])
     const valorPendiente = cantPedida > 0
       ? (valorPedido / cantPedida) * cantPendiente
