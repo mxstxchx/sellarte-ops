@@ -88,7 +88,7 @@ create table public.pedidos (
 
   -- Cliente (de informe_pendientes col C-E)
   cliente_nit           bigint not null,
-  cliente_sucursal      integer not null default 0,
+  cliente_sucursal      bigint not null default 0,
   cliente_nombre        text not null,
 
   -- Producto (de informe_pendientes col F-H)
