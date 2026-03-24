@@ -1,9 +1,10 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useMemo, useState, Fragment } from 'react'
 import {
   AlertCircle, ArrowUpDown, ArrowUp, ArrowDown, Search,
   LayoutGrid, Table2, TrendingDown, Clock, Calendar, CheckCircle2,
+  ChevronDown, ChevronRight,
 } from 'lucide-react'
 import { calcSemaforo } from '@/lib/parser/holidays'
 
@@ -172,7 +173,6 @@ function SemaforoBar({ rows }: { rows: PedidoRow[] }) {
         Estado del portafolio · {total} pedidos únicos
       </p>
 
-      {/* Stacked bar */}
       <div className="flex rounded-full overflow-hidden h-4 gap-px">
         {levels.map(l => {
           const pct = (counts[l] / total) * 100
@@ -188,7 +188,6 @@ function SemaforoBar({ rows }: { rows: PedidoRow[] }) {
         })}
       </div>
 
-      {/* Legend */}
       <div className="flex flex-wrap gap-x-5 gap-y-1.5 mt-3">
         {levels.map(l => counts[l] > 0 && (
           <div key={l} className="flex items-center gap-1.5">
@@ -250,7 +249,6 @@ function GroupCards({ rows, groupBy }: { rows: PedidoRow[]; groupBy: 'asesor' | 
       g.valor += r.valor_pendiente
       g.pedidos.add(r.numero_siigo)
       g.empresas.add(r.empresa)
-      // semáforo del pedido: tomar el peor nivel entre las líneas del mismo pedido
       if (!g.pedidos.has(r.numero_siigo + '_counted')) {
         g.counts[getSemaforoLevel(r.semaforo)]++
         g.pedidos.add(r.numero_siigo + '_counted')
@@ -385,6 +383,17 @@ export default function DashboardClient({
   const isGerente = profile?.role === 'gerente'
   const [viewMode, setViewMode] = useState<ViewMode>('resumen')
 
+  // ── Expandir/colapsar pedidos (vista tabla) ───────────────
+  const [expandedPedidos, setExpandedPedidos] = useState<Set<string>>(new Set())
+  function togglePedido(key: string) {
+    setExpandedPedidos(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
   // ── Enriquecer con semáforo ───────────────────────────────
   const rows: PedidoRow[] = useMemo(() => {
     const today = new Date()
@@ -397,6 +406,7 @@ export default function DashboardClient({
   // ── Estado de filtros ─────────────────────────────────────
   const [empresa,   setEmpresa]   = useState<string>('todas')
   const [asesorF,   setAsesorF]   = useState<string>('todos')
+  const [clienteF,  setClienteF]  = useState<string>('todos')
   const [lineaF,    setLineaF]    = useState<string>('todas')
   const [semFiltro, setSemFiltro] = useState<string>('todos')
   const [busqueda,  setBusqueda]  = useState('')
@@ -410,6 +420,11 @@ export default function DashboardClient({
       .sort((a, b) => a[1].localeCompare(b[1])),
   [rows])
 
+  const clientes = useMemo(() =>
+    [...new Map(rows.map(r => [r.cliente_nit, r.cliente_nombre])).entries()]
+      .sort((a, b) => a[1].localeCompare(b[1])),
+  [rows])
+
   const lineas = useMemo(() =>
     [...new Set(rows.map(r => r.linea).filter(Boolean))].sort(),
   [rows])
@@ -418,9 +433,10 @@ export default function DashboardClient({
   const filtered = useMemo(() => {
     const q = busqueda.toLowerCase()
     return rows.filter(r => {
-      if (empresa !== 'todas' && r.empresa !== empresa) return false
-      if (asesorF !== 'todos' && String(r.asesor_codigo) !== asesorF) return false
-      if (lineaF  !== 'todas' && r.linea !== lineaF) return false
+      if (empresa   !== 'todas' && r.empresa !== empresa) return false
+      if (asesorF   !== 'todos' && String(r.asesor_codigo) !== asesorF) return false
+      if (clienteF  !== 'todos' && String(r.cliente_nit)   !== clienteF) return false
+      if (lineaF    !== 'todas' && r.linea !== lineaF) return false
       if (semFiltro === 'vencido'   && (r.semaforo === null || r.semaforo >= 0)) return false
       if (semFiltro === 'urgente'   && (r.semaforo === null || r.semaforo < 0 || r.semaforo > 3)) return false
       if (semFiltro === 'pronto'    && (r.semaforo === null || r.semaforo <= 3 || r.semaforo > 7)) return false
@@ -433,7 +449,7 @@ export default function DashboardClient({
       }
       return true
     })
-  }, [rows, empresa, asesorF, lineaF, semFiltro, busqueda])
+  }, [rows, empresa, asesorF, clienteF, lineaF, semFiltro, busqueda])
 
   // ── Ordenar ───────────────────────────────────────────────
   const sorted = useMemo(() => {
@@ -449,10 +465,21 @@ export default function DashboardClient({
     })
   }, [filtered, sortKey, sortDir])
 
-  // ── Paginar ───────────────────────────────────────────────
-  const totalPages  = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE))
+  // ── Agrupar por pedido (para vista tabla) ─────────────────
+  const groupedPedidos = useMemo(() => {
+    const groups = new Map<string, PedidoRow[]>()
+    for (const row of sorted) {
+      const key = `${row.empresa}:${row.numero_siigo}`
+      if (!groups.has(key)) groups.set(key, [])
+      groups.get(key)!.push(row)
+    }
+    return [...groups.values()]
+  }, [sorted])
+
+  // ── Paginar (por grupos de pedido) ────────────────────────
+  const totalPages  = Math.max(1, Math.ceil(groupedPedidos.length / PAGE_SIZE))
   const currentPage = Math.min(page, totalPages)
-  const pageRows    = sorted.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
+  const pageGroups  = groupedPedidos.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
 
   function toggleSort(key: SortKey) {
     if (sortKey === key) {
@@ -463,7 +490,11 @@ export default function DashboardClient({
     setPage(1)
   }
 
-  function onFilterChange(fn: () => void) { fn(); setPage(1) }
+  function onFilterChange(fn: () => void) {
+    fn()
+    setPage(1)
+    setExpandedPedidos(new Set())
+  }
 
   // ── KPIs ──────────────────────────────────────────────────
   const kpis = useMemo(() => {
@@ -489,6 +520,8 @@ export default function DashboardClient({
     )
   }
 
+  const colCount = isGerente ? 13 : 12
+
   // ── Sin datos ─────────────────────────────────────────────
   if (!batch) {
     return (
@@ -501,15 +534,15 @@ export default function DashboardClient({
     )
   }
 
-  const hasFilters = empresa !== 'todas' || asesorF !== 'todos' || lineaF !== 'todas' || semFiltro !== 'todos' || busqueda
+  const hasFilters = empresa !== 'todas' || asesorF !== 'todos' || clienteF !== 'todos' || lineaF !== 'todas' || semFiltro !== 'todos' || busqueda
 
   return (
     <div className="flex-1 overflow-auto">
       <div className="p-6 space-y-4 min-w-0">
 
         {/* ── Header ── */}
-        <div className="flex items-start justify-between gap-4">
-          <div>
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div className="min-w-0">
             <h1 className="text-xl font-bold text-gray-900">Dashboard de Pedidos</h1>
             <p className="text-sm text-gray-400 mt-0.5">
               Datos al {fmtDate(batch.fecha_datos)} · Cargado por {batch.uploaded_by_name}
@@ -543,7 +576,7 @@ export default function DashboardClient({
 
         {/* ── KPIs ── */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <KpiCard title="Valor pendiente"    value={cop(kpis.valorTotal)}           accent="blue"   icon={CheckCircle2} />
+          <KpiCard title="Valor pendiente"    value={cop(kpis.valorTotal)}             accent="blue"   icon={CheckCircle2} />
           <KpiCard title="Pedidos vencidos"   value={String(kpis.vencidos)}   sub="fecha pactada superada"  accent="red"    icon={TrendingDown} />
           <KpiCard title="Urgentes (≤3 días)" value={String(kpis.urgentes)}   sub="pedidos · días hábiles"  accent="orange" icon={Clock} />
           <KpiCard title="Pedidos únicos"     value={String(kpis.pedidosUnicos)} sub={`${filtered.length} líneas`} icon={Calendar} />
@@ -581,6 +614,14 @@ export default function DashboardClient({
               </select>
             )}
 
+            <select value={clienteF} onChange={e => onFilterChange(() => setClienteF(e.target.value))}
+              className="px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-400">
+              <option value="todos">Todos los clientes</option>
+              {clientes.map(([nit, nom]) => (
+                <option key={nit} value={String(nit)}>{nom.replace(/\s+/g, ' ').trim()}</option>
+              ))}
+            </select>
+
             <select value={lineaF} onChange={e => onFilterChange(() => setLineaF(e.target.value))}
               className="px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-400">
               <option value="todas">Todas las líneas</option>
@@ -599,7 +640,11 @@ export default function DashboardClient({
 
             {hasFilters && (
               <button
-                onClick={() => { setEmpresa('todas'); setAsesorF('todos'); setLineaF('todas'); setSemFiltro('todos'); setBusqueda(''); setPage(1) }}
+                onClick={() => {
+                  setEmpresa('todas'); setAsesorF('todos'); setClienteF('todos')
+                  setLineaF('todas'); setSemFiltro('todos'); setBusqueda(''); setPage(1)
+                  setExpandedPedidos(new Set())
+                }}
                 className="text-xs text-blue-600 hover:underline"
               >
                 Limpiar filtros
@@ -631,6 +676,7 @@ export default function DashboardClient({
               <table className="w-full border-collapse">
                 <thead className="bg-gray-50 border-b border-gray-200">
                   <tr>
+                    <th className="w-8 px-2" />
                     <Th col="semaforo"           label="Semáforo" />
                     <th className={thClass}>Empresa</th>
                     <Th col="pedido_vendedor"    label="# Vendedor" />
@@ -646,28 +692,102 @@ export default function DashboardClient({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {pageRows.length === 0 ? (
+                  {pageGroups.length === 0 ? (
                     <tr>
-                      <td colSpan={isGerente ? 12 : 11} className="px-3 py-10 text-center text-sm text-gray-400">
+                      <td colSpan={colCount} className="px-3 py-10 text-center text-sm text-gray-400">
                         No hay pedidos con los filtros actuales
                       </td>
                     </tr>
-                  ) : pageRows.map(r => (
-                    <tr key={r.id} className="hover:bg-gray-50 transition-colors">
-                      <td className={tdClass}><SemaforoBadge days={r.semaforo} /></td>
-                      <td className={tdClass}><EmpresaBadge empresa={r.empresa} /></td>
-                      <td className={tdClass + ' font-mono text-xs'}>{r.pedido_vendedor ?? <span className="text-gray-300">—</span>}</td>
-                      <td className={tdClass + ' font-mono text-xs'}>{r.numero_siigo}</td>
-                      {isGerente && <td className={tdClass + ' max-w-[140px] truncate'} title={r.asesor_nombre}>{r.asesor_nombre.replace(/\s+/g,' ').trim()}</td>}
-                      <td className={tdClass + ' max-w-[180px] truncate'} title={r.cliente_nombre}>{r.cliente_nombre.replace(/\s+/g,' ').trim()}</td>
-                      <td className={tdClass + ' max-w-[200px] truncate'} title={r.descripcion}>{r.descripcion.replace(/\s+/g,' ').trim()}</td>
-                      <td className={tdClass}>{r.linea || <span className="text-gray-300">—</span>}</td>
-                      <td className={tdClass + ' text-right tabular-nums'}>{r.cantidad_pendiente.toLocaleString('es-CO')}</td>
-                      <td className={tdClass + ' text-right tabular-nums font-medium'}>{cop(r.valor_pendiente)}</td>
-                      <td className={tdClass + ' text-gray-400 text-xs'}>{fmtDate(r.fecha_pedido)}</td>
-                      <td className={tdClass + ' text-xs'}>{fmtDate(r.fecha_pactada)}</td>
-                    </tr>
-                  ))}
+                  ) : pageGroups.map(group => {
+                    const first = group[0]
+                    const gKey = `${first.empresa}:${first.numero_siigo}`
+                    const isExpanded = expandedPedidos.has(gKey)
+                    const totalValor    = group.reduce((s, r) => s + r.valor_pendiente, 0)
+                    const totalCantidad = group.reduce((s, r) => s + r.cantidad_pendiente, 0)
+
+                    return (
+                      <Fragment key={gKey}>
+                        {/* ── Fila pedido (colapsable) ── */}
+                        <tr
+                          className="bg-gray-50/80 hover:bg-blue-50/40 cursor-pointer transition-colors"
+                          onClick={() => togglePedido(gKey)}
+                        >
+                          <td className="px-2 py-2.5 text-gray-400 text-center">
+                            {isExpanded
+                              ? <ChevronDown  className="w-3.5 h-3.5 inline" />
+                              : <ChevronRight className="w-3.5 h-3.5 inline" />
+                            }
+                          </td>
+                          <td className={tdClass}><SemaforoBadge days={first.semaforo} /></td>
+                          <td className={tdClass}><EmpresaBadge empresa={first.empresa} /></td>
+                          <td className={tdClass + ' font-mono text-xs'}>
+                            {first.pedido_vendedor ?? <span className="text-gray-300">—</span>}
+                          </td>
+                          <td className={tdClass + ' font-mono text-xs font-semibold'}>{first.numero_siigo}</td>
+                          {isGerente && (
+                            <td className={tdClass + ' max-w-[140px] truncate'} title={first.asesor_nombre}>
+                              {first.asesor_nombre.replace(/\s+/g,' ').trim()}
+                            </td>
+                          )}
+                          <td className={tdClass + ' max-w-[180px] truncate'} title={first.cliente_nombre}>
+                            {first.cliente_nombre.replace(/\s+/g,' ').trim()}
+                          </td>
+                          <td className="px-3 py-2.5">
+                            <span className="text-xs text-gray-400 italic">
+                              {group.length} producto{group.length !== 1 ? 's' : ''}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2.5 text-gray-300 text-xs">—</td>
+                          <td className={tdClass + ' text-right tabular-nums font-medium'}>
+                            {totalCantidad.toLocaleString('es-CO')}
+                          </td>
+                          <td className={tdClass + ' text-right tabular-nums font-semibold'}>
+                            {cop(totalValor)}
+                          </td>
+                          <td className={tdClass + ' text-gray-400 text-xs'}>{fmtDate(first.fecha_pedido)}</td>
+                          <td className={tdClass + ' text-xs'}>{fmtDate(first.fecha_pactada)}</td>
+                        </tr>
+
+                        {/* ── Filas de productos (expandidas) ── */}
+                        {isExpanded && group.map((line, li) => (
+                          <tr key={`${gKey}-${li}`} className="bg-blue-50/20 hover:bg-blue-50/40 border-l-2 border-l-blue-100">
+                            <td className="px-2 py-2 text-center">
+                              <span className="text-gray-300 text-xs">└</span>
+                            </td>
+                            <td className="px-3 py-2" />
+                            <td className="px-3 py-2" />
+                            <td className="px-3 py-2 text-xs text-gray-400 font-mono">
+                              {line.referencia || '—'}
+                            </td>
+                            <td className="px-3 py-2 text-xs text-gray-500 font-mono">
+                              {line.producto_codigo}
+                            </td>
+                            {isGerente && <td className="px-3 py-2" />}
+                            <td className="px-3 py-2" />
+                            <td className="px-3 py-2 text-sm text-gray-700 max-w-[200px]">
+                              <span className="truncate block" title={line.descripcion}>
+                                {line.descripcion.replace(/\s+/g,' ').trim()}
+                              </span>
+                            </td>
+                            <td className="px-3 py-2">
+                              {line.linea
+                                ? <span className="text-xs px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">{line.linea}</span>
+                                : <span className="text-gray-300 text-xs">—</span>
+                              }
+                            </td>
+                            <td className="px-3 py-2 text-sm text-gray-600 text-right tabular-nums">
+                              {line.cantidad_pendiente.toLocaleString('es-CO')}
+                            </td>
+                            <td className="px-3 py-2 text-sm text-gray-600 text-right tabular-nums">
+                              {cop(line.valor_pendiente)}
+                            </td>
+                            <td className="px-3 py-2" />
+                            <td className="px-3 py-2" />
+                          </tr>
+                        ))}
+                      </Fragment>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
@@ -675,7 +795,8 @@ export default function DashboardClient({
             {totalPages > 1 && (
               <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 bg-gray-50">
                 <p className="text-xs text-gray-500">
-                  {sorted.length} resultados · página {currentPage} de {totalPages}
+                  {groupedPedidos.length} pedido{groupedPedidos.length !== 1 ? 's' : ''}
+                  {' '}· {sorted.length} líneas · página {currentPage} de {totalPages}
                 </p>
                 <div className="flex gap-1">
                   {(() => {
