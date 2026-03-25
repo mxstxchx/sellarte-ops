@@ -158,7 +158,7 @@ const PAGE_SIZE = 25
 // ============================================================
 // VISTA RESUMEN: barra semáforo global
 // ============================================================
-function SemaforoBar({ rows }: { rows: PedidoRow[] }) {
+function SemaforoBar({ rows, onClick }: { rows: PedidoRow[]; onClick?: () => void }) {
   const counts = useMemo(() => {
     const c: Record<SemaforoLevel, number> = { vencido: 0, hoy: 0, urgente: 0, pronto: 0, ok: 0, sin_fecha: 0 }
     const seen = new Set<string>()
@@ -176,9 +176,13 @@ function SemaforoBar({ rows }: { rows: PedidoRow[] }) {
   const levels: SemaforoLevel[] = ['vencido', 'hoy', 'urgente', 'pronto', 'ok', 'sin_fecha']
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-5">
+    <div
+      className={`bg-white rounded-xl border border-gray-200 p-5 ${onClick ? 'cursor-pointer hover:border-blue-300 hover:shadow-sm transition-all' : ''}`}
+      onClick={onClick}
+    >
       <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
         Estado del portafolio · {total} pedidos únicos
+        {onClick && <span className="ml-2 text-blue-400 font-normal normal-case tracking-normal">· Ver tabla →</span>}
       </p>
 
       <div className="flex rounded-full overflow-hidden h-4 gap-px">
@@ -793,7 +797,7 @@ export default function DashboardClient({
         {/* ── Vista Resumen ── */}
         {viewMode === 'resumen' && (
           <div className="space-y-4">
-            <SemaforoBar rows={filtered} />
+            <SemaforoBar rows={filtered} onClick={() => setViewMode('tabla')} />
 
             <div>
               <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">

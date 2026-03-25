@@ -89,8 +89,8 @@ export default function Sidebar({
     setSwitcherOpen(false)
   }
 
-  const role          = profile?.role ?? 'gerente'
-  const isGerente     = role === 'gerente'
+  const role          = impersonateAs?.role ?? profile?.role ?? 'gerente'
+  const isGerente     = profile?.role === 'gerente'
   const hasSwitchable = isGerente && allUsers.length > 0
 
   // Group users by role for display

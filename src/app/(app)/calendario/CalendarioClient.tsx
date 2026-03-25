@@ -18,9 +18,19 @@ interface PedidoRaw {
   cliente_nombre: string
   numero_siigo: string
   pedido_vendedor: string | null
+  cantidad_pedida: number
   cantidad_pendiente: number
+  valor_pendiente: number
   fecha_pactada: string | null
+  fecha_entrega_parcial: string | null
   sec: number
+  producto_codigo: string
+  descripcion: string
+  linea: string
+  tipo_ip: string | null
+  tipo_ip_desc: string | null
+  calibre: string | null
+  calibre_desc: string | null
 }
 
 interface UniquePedido {
@@ -34,6 +44,9 @@ interface UniquePedido {
   fecha_pactada: string | null
   semaforo: number | null
   nlineas: number
+  lineas: string[]
+  tiposIp: string[]
+  calibres: string[]
 }
 
 interface Batch {
@@ -175,6 +188,7 @@ export default function CalendarioClient({
   profile: Profile | null
 }) {
   const isGerente = profile?.role === 'gerente'
+  const isProgram = profile?.role === 'programador'
   const today = useMemo(() => new Date(), [])
   const todayWeekKey = useMemo(() => getWeekKey(today), [today])
 
@@ -182,15 +196,18 @@ export default function CalendarioClient({
   const [empresaF,  setEmpresaF]  = useState<string[]>([])
   const [asesorF,   setAsesorF]   = useState<string[]>([])
   const [clienteF,  setClienteF]  = useState<string[]>([])
+  const [lineaF,    setLineaF]    = useState<string[]>([])
+  const [tipoIpF,   setTipoIpF]   = useState<string[]>([])
+  const [calibreF,  setCalibreF]  = useState<string[]>([])
   const [semFiltro, setSemFiltro] = useState<string[]>([])
   const [busqueda,  setBusqueda]  = useState('')
-  const [calTab,    setCalTab]    = useState<'vencidos' | 'proximas'>('proximas')
+  const [calTab,    setCalTab]    = useState<'vencidos' | 'proximas'>('vencidos')
   const [selectedPedido, setSelectedPedido] = useState<UniquePedido | null>(null)
   const { impersonateAs } = useImpersonation()
 
   // ── Consolidar líneas → pedidos únicos ───────────────────
   const uniquePedidos = useMemo<UniquePedido[]>(() => {
-    const map = new Map<string, UniquePedido>()
+    const map = new Map<string, UniquePedido & { _lineas: Set<string>; _tiposIp: Set<string>; _calibres: Set<string> }>()
     for (const p of (pedidos as PedidoRaw[])) {
       const key = `${p.empresa}:${p.numero_siigo}`
       if (!map.has(key)) {
@@ -208,13 +225,27 @@ export default function CalendarioClient({
           fecha_pactada:    p.fecha_pactada,
           semaforo,
           nlineas:          0,
+          lineas:           [],
+          tiposIp:          [],
+          calibres:         [],
+          _lineas:          new Set(),
+          _tiposIp:         new Set(),
+          _calibres:        new Set(),
         })
       }
       const u = map.get(key)!
       u.cantidad += p.cantidad_pendiente
       u.nlineas++
+      if (p.linea)    u._lineas.add(p.linea)
+      if (p.tipo_ip)  u._tiposIp.add(p.tipo_ip)
+      if (p.calibre)  u._calibres.add(p.calibre)
     }
-    return [...map.values()]
+    return [...map.values()].map(u => ({
+      ...u,
+      lineas:   [...u._lineas],
+      tiposIp:  [...u._tiposIp],
+      calibres: [...u._calibres],
+    }))
   }, [pedidos, today])
 
   // ── Listas de opciones únicas ─────────────────────────────
@@ -228,6 +259,24 @@ export default function CalendarioClient({
       .sort((a, b) => a[0].localeCompare(b[0])),
   [uniquePedidos])
 
+  const lineas = useMemo(() =>
+    [...new Set((pedidos as PedidoRaw[]).map(p => p.linea).filter(Boolean))].sort(),
+  [pedidos])
+
+  const tiposIp = useMemo(() =>
+    [...new Map((pedidos as PedidoRaw[])
+      .filter(p => p.tipo_ip)
+      .map(p => [p.tipo_ip!, p.tipo_ip_desc ?? p.tipo_ip!])
+    ).entries()].sort((a, b) => a[0].localeCompare(b[0])),
+  [pedidos])
+
+  const calibres = useMemo(() =>
+    [...new Map((pedidos as PedidoRaw[])
+      .filter(p => p.calibre)
+      .map(p => [p.calibre!, p.calibre_desc ?? p.calibre!])
+    ).entries()].sort((a, b) => a[0].localeCompare(b[0])),
+  [pedidos])
+
   // ── Filtrar ───────────────────────────────────────────────
   const filteredPedidos = useMemo(() => {
     const q = busqueda.toLowerCase()
@@ -236,6 +285,9 @@ export default function CalendarioClient({
       if (empresaF.length  > 0 && !empresaF.includes(p.empresa)) return false
       if (asesorF.length   > 0 && !asesorF.includes(String(p.asesor_codigo))) return false
       if (clienteF.length  > 0 && !clienteF.includes(p.cliente_nombre)) return false
+      if (lineaF.length    > 0 && !lineaF.some(f => p.lineas.includes(f))) return false
+      if (tipoIpF.length   > 0 && !tipoIpF.some(f => p.tiposIp.includes(f))) return false
+      if (calibreF.length  > 0 && !calibreF.some(f => p.calibres.includes(f))) return false
       if (semFiltro.length > 0 && !semFiltro.includes(getSemaforoLevel(p.semaforo))) return false
       if (q) {
         const hay = [p.cliente_nombre, p.numero_siigo, p.pedido_vendedor ?? '', p.asesor_nombre]
@@ -244,7 +296,7 @@ export default function CalendarioClient({
       }
       return true
     })
-  }, [uniquePedidos, impersonateAs, empresaF, asesorF, clienteF, semFiltro, busqueda]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [uniquePedidos, impersonateAs, empresaF, asesorF, clienteF, lineaF, tipoIpF, calibreF, semFiltro, busqueda]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Agrupar por semana (tabs) ─────────────────────────────
   function buildWeekGroups(peds: UniquePedido[]): WeekGroup[] {
@@ -287,13 +339,14 @@ export default function CalendarioClient({
   const activeGroups = calTab === 'vencidos' ? vencidosGroups : proximasGroups
   const vencidosCount = vencidosGroups.reduce((s, g) => s + g.pedidos.length, 0)
 
-  const hasFilters = empresaF.length > 0 || asesorF.length > 0 || clienteF.length > 0 || semFiltro.length > 0 || !!busqueda
+  const hasFilters = empresaF.length > 0 || asesorF.length > 0 || clienteF.length > 0 ||
+                     lineaF.length > 0 || tipoIpF.length > 0 || calibreF.length > 0 ||
+                     semFiltro.length > 0 || !!busqueda
 
   const activeChips = useMemo(() => {
     const chips: { id: string; label: string; onRemove: () => void }[] = []
     for (const v of empresaF) {
-      const label = v === 'sllrt' ? 'SELLARTE' : 'RV'
-      chips.push({ id: `e:${v}`, label, onRemove: () => setEmpresaF(prev => prev.filter(x => x !== v)) })
+      chips.push({ id: `e:${v}`, label: v === 'sllrt' ? 'SELLARTE' : 'RV', onRemove: () => setEmpresaF(prev => prev.filter(x => x !== v)) })
     }
     for (const v of asesorF) {
       const nom = asesores.find(([cod]) => String(cod) === v)?.[1] ?? v
@@ -302,12 +355,22 @@ export default function CalendarioClient({
     for (const v of clienteF) {
       chips.push({ id: `c:${v}`, label: v.replace(/\s+/g,' ').trim(), onRemove: () => setClienteF(prev => prev.filter(x => x !== v)) })
     }
+    for (const v of lineaF) {
+      chips.push({ id: `l:${v}`, label: v, onRemove: () => setLineaF(prev => prev.filter(x => x !== v)) })
+    }
+    for (const v of tipoIpF) {
+      const desc = tiposIp.find(([cod]) => cod === v)?.[1] ?? v
+      chips.push({ id: `t:${v}`, label: `${v} – ${desc}`, onRemove: () => setTipoIpF(prev => prev.filter(x => x !== v)) })
+    }
+    for (const v of calibreF) {
+      const desc = calibres.find(([cod]) => cod === v)?.[1] ?? v
+      chips.push({ id: `k:${v}`, label: desc, onRemove: () => setCalibreF(prev => prev.filter(x => x !== v)) })
+    }
     for (const v of semFiltro) {
-      const label = SEM_CONFIG[v as SemaforoLevel]?.label ?? v
-      chips.push({ id: `s:${v}`, label, onRemove: () => setSemFiltro(prev => prev.filter(x => x !== v)) })
+      chips.push({ id: `s:${v}`, label: SEM_CONFIG[v as SemaforoLevel]?.label ?? v, onRemove: () => setSemFiltro(prev => prev.filter(x => x !== v)) })
     }
     return chips
-  }, [empresaF, asesorF, clienteF, semFiltro, asesores]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [empresaF, asesorF, clienteF, lineaF, tipoIpF, calibreF, semFiltro, asesores, tiposIp, calibres]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Sin datos ─────────────────────────────────────────────
   if (!batch) {
@@ -409,6 +472,36 @@ export default function CalendarioClient({
               placeholder="Buscar cliente…"
             />
 
+            {lineas.length > 0 && (
+              <MultiFilter
+                label="Línea"
+                options={lineas.map(l => [l, l])}
+                selected={lineaF}
+                onChange={v => setLineaF(v)}
+                placeholder="Buscar línea…"
+              />
+            )}
+
+            {tiposIp.length > 0 && (
+              <MultiFilter
+                label="Tipo IP"
+                options={tiposIp.map(([cod, desc]) => [cod, `${cod} – ${desc}`])}
+                selected={tipoIpF}
+                onChange={v => setTipoIpF(v)}
+                placeholder="Buscar tipo…"
+              />
+            )}
+
+            {calibres.length > 0 && (
+              <MultiFilter
+                label="Calibre"
+                options={calibres.map(([cod, desc]) => [cod, desc])}
+                selected={calibreF}
+                onChange={v => setCalibreF(v)}
+                placeholder="Buscar calibre…"
+              />
+            )}
+
             <MultiFilter
               label="Semáforo"
               options={[
@@ -425,7 +518,7 @@ export default function CalendarioClient({
 
             {hasFilters && (
               <button
-                onClick={() => { setEmpresaF([]); setAsesorF([]); setClienteF([]); setSemFiltro([]); setBusqueda('') }}
+                onClick={() => { setEmpresaF([]); setAsesorF([]); setClienteF([]); setLineaF([]); setTipoIpF([]); setCalibreF([]); setSemFiltro([]); setBusqueda('') }}
                 className="text-xs text-gray-400 hover:text-red-600 transition-colors"
               >
                 Limpiar todo
@@ -592,25 +685,43 @@ export default function CalendarioClient({
       </div>
     </div>
 
-    {/* ── PedidoDetailPanel (metadata only, no lines) ── */}
-    {selectedPedido && (
-      <PedidoDetailPanel
-        pedido={{
-          empresa:         selectedPedido.empresa,
-          numero_siigo:    selectedPedido.numero_siigo,
-          pedido_vendedor: selectedPedido.pedido_vendedor,
-          asesor_nombre:   selectedPedido.asesor_nombre,
-          cliente_nombre:  selectedPedido.cliente_nombre,
-          fecha_pactada:   selectedPedido.fecha_pactada,
-          semaforo:        selectedPedido.semaforo,
-          cantidad:        selectedPedido.cantidad,
-          nlineas:         selectedPedido.nlineas,
-        }}
-        lines={[]}
-        onClose={() => setSelectedPedido(null)}
-        isProgram={true}
-      />
-    )}
+    {/* ── PedidoDetailPanel ── */}
+    {selectedPedido && (() => {
+      const rawLines = (pedidos as PedidoRaw[]).filter(
+        p => p.empresa === selectedPedido.empresa && p.numero_siigo === selectedPedido.numero_siigo
+      )
+      return (
+        <PedidoDetailPanel
+          pedido={{
+            empresa:         selectedPedido.empresa,
+            numero_siigo:    selectedPedido.numero_siigo,
+            pedido_vendedor: selectedPedido.pedido_vendedor,
+            asesor_nombre:   selectedPedido.asesor_nombre,
+            cliente_nombre:  selectedPedido.cliente_nombre,
+            fecha_pactada:   selectedPedido.fecha_pactada,
+            semaforo:        selectedPedido.semaforo,
+            cantidad:        selectedPedido.cantidad,
+            nlineas:         selectedPedido.nlineas,
+          }}
+          lines={rawLines.map(r => ({
+            sec:                   r.sec,
+            producto_codigo:       r.producto_codigo,
+            descripcion:           r.descripcion,
+            linea:                 r.linea,
+            tipo_ip:               r.tipo_ip,
+            tipo_ip_desc:          r.tipo_ip_desc,
+            calibre:               r.calibre,
+            calibre_desc:          r.calibre_desc,
+            cantidad_pedida:       r.cantidad_pedida,
+            cantidad_pendiente:    r.cantidad_pendiente,
+            valor_pendiente:       r.valor_pendiente,
+            fecha_entrega_parcial: r.fecha_entrega_parcial,
+          }))}
+          onClose={() => setSelectedPedido(null)}
+          isProgram={isProgram}
+        />
+      )
+    })()}
     </>
   )
 }

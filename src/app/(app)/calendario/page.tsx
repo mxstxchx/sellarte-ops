@@ -32,7 +32,7 @@ export default async function CalendarioPage() {
   if (batch) {
     let query = admin
       .from('pedidos')
-      .select('empresa, asesor_codigo, asesor_nombre, cliente_nit, cliente_nombre, numero_siigo, pedido_vendedor, cantidad_pendiente, fecha_pactada, sec')
+      .select('empresa, asesor_codigo, asesor_nombre, cliente_nit, cliente_nombre, numero_siigo, pedido_vendedor, cantidad_pedida, cantidad_pendiente, valor_pendiente, fecha_pactada, fecha_entrega_parcial, sec, producto_codigo, descripcion, linea, tipo_ip, tipo_ip_desc, calibre, calibre_desc')
       .eq('upload_batch_id', batch.id)
       .order('fecha_pactada', { ascending: true })
 
