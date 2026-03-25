@@ -7,6 +7,10 @@ import {
   ChevronDown, ChevronRight,
 } from 'lucide-react'
 import { calcSemaforo } from '@/lib/parser/holidays'
+import MultiFilter from '@/components/MultiFilter'
+import PedidoDetailPanel, { type PedidoDetail, type PedidoLine } from '@/components/PedidoDetailPanel'
+import AsesorDetailPanel, { type AsesorPanelRow } from '@/components/AsesorDetailPanel'
+import { useImpersonation } from '../ImpersonationContext'
 
 // ============================================================
 // TIPOS
@@ -32,6 +36,10 @@ interface Pedido {
   fecha_pedido: string | null
   fecha_pactada: string | null
   fecha_entrega_parcial: string | null
+  tipo_ip: string | null
+  tipo_ip_desc: string | null
+  calibre: string | null
+  calibre_desc: string | null
 }
 
 interface PedidoRow extends Pedido {
@@ -220,42 +228,26 @@ function MiniSemaforoBar({ counts, total }: { counts: Record<SemaforoLevel, numb
   )
 }
 
-function GroupCards({ rows, groupBy }: { rows: PedidoRow[]; groupBy: 'asesor' | 'cliente' }) {
-  const groups = useMemo(() => {
-    const map = new Map<string, {
-      label: string
-      valor: number
-      counts: Record<SemaforoLevel, number>
-      pedidos: Set<string>
-      empresas: Set<string>
-    }>()
-
+function GroupCards({
+  rows, groupBy, isProgram, onCardClick,
+}: {
+  rows: PedidoRow[]
+  groupBy: 'asesor' | 'cliente'
+  isProgram: boolean
+  onCardClick?: (codigo: number, nombre: string) => void
+}) {
+  const groupsWithKeys = useMemo(() => {
+    const map = new Map<string, { label: string; valor: number; cantidad: number; counts: Record<SemaforoLevel, number>; pedidos: Set<string>; empresas: Set<string> }>()
     for (const r of rows) {
       const key = groupBy === 'asesor' ? String(r.asesor_codigo) : String(r.cliente_nit)
-      const label = groupBy === 'asesor'
-        ? r.asesor_nombre.replace(/\s+/g, ' ').trim()
-        : r.cliente_nombre.replace(/\s+/g, ' ').trim()
-
-      if (!map.has(key)) {
-        map.set(key, {
-          label,
-          valor: 0,
-          counts: { vencido: 0, hoy: 0, urgente: 0, pronto: 0, ok: 0, sin_fecha: 0 },
-          pedidos: new Set(),
-          empresas: new Set(),
-        })
-      }
+      const label = groupBy === 'asesor' ? r.asesor_nombre.replace(/\s+/g, ' ').trim() : r.cliente_nombre.replace(/\s+/g, ' ').trim()
+      if (!map.has(key)) map.set(key, { label, valor: 0, cantidad: 0, counts: { vencido: 0, hoy: 0, urgente: 0, pronto: 0, ok: 0, sin_fecha: 0 }, pedidos: new Set(), empresas: new Set() })
       const g = map.get(key)!
-      g.valor += r.valor_pendiente
-      g.pedidos.add(r.numero_siigo)
-      g.empresas.add(r.empresa)
-      if (!g.pedidos.has(r.numero_siigo + '_counted')) {
-        g.counts[getSemaforoLevel(r.semaforo)]++
-        g.pedidos.add(r.numero_siigo + '_counted')
-      }
+      g.valor += r.valor_pendiente; g.cantidad += r.cantidad_pendiente
+      g.pedidos.add(r.numero_siigo); g.empresas.add(r.empresa)
+      if (!g.pedidos.has(r.numero_siigo + '_counted')) { g.counts[getSemaforoLevel(r.semaforo)]++; g.pedidos.add(r.numero_siigo + '_counted') }
     }
-
-    return [...map.values()].sort((a, b) => b.valor - a.valor)
+    return [...map.entries()].sort(([,a], [,b]) => b.valor - a.valor)
   }, [rows, groupBy])
 
   const URGENCY_LABELS: Record<SemaforoLevel, string> = {
@@ -264,15 +256,21 @@ function GroupCards({ rows, groupBy }: { rows: PedidoRow[]; groupBy: 'asesor' | 
 
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-      {groups.map((g, i) => {
+      {groupsWithKeys.map(([rawKey, g], i) => {
         const total = Object.values(g.counts).reduce((s, n) => s + n, 0)
         const critical = g.counts.vencido + g.counts.hoy
         const urgent   = g.counts.urgente
         const mainLevel: SemaforoLevel = critical > 0 ? 'vencido' : urgent > 0 ? 'urgente' : g.counts.pronto > 0 ? 'pronto' : g.counts.ok > 0 ? 'ok' : 'sin_fecha'
         const cfg = SEM_CONFIG[mainLevel]
+        const clickable = !!onCardClick && groupBy === 'asesor'
 
         return (
-          <div key={i} className="bg-white rounded-xl border border-gray-200 p-4 hover:shadow-sm transition-shadow">
+          <div
+            key={i}
+            className={`bg-white rounded-xl border border-gray-200 p-4 hover:shadow-sm transition-shadow
+              ${clickable ? 'cursor-pointer hover:border-blue-300' : ''}`}
+            onClick={clickable ? () => onCardClick!(Number(rawKey), g.label) : undefined}
+          >
             <div className="flex items-start justify-between gap-2">
               <p className="text-sm font-semibold text-gray-800 leading-tight line-clamp-2">{g.label}</p>
               {critical > 0 && (
@@ -286,7 +284,12 @@ function GroupCards({ rows, groupBy }: { rows: PedidoRow[]; groupBy: 'asesor' | 
 
             <div className="mt-3 flex items-end justify-between">
               <div>
-                <p className="text-base font-bold text-gray-900">{cop(g.valor)}</p>
+                <p className="text-base font-bold text-gray-900">
+                  {isProgram
+                    ? `${g.cantidad.toLocaleString('es-CO')} uds`
+                    : cop(g.valor)
+                  }
+                </p>
                 <p className="text-xs text-gray-400 mt-0.5">
                   {total} pedido{total !== 1 ? 's' : ''}
                   {[...g.empresas].map(e => (
@@ -311,7 +314,13 @@ function GroupCards({ rows, groupBy }: { rows: PedidoRow[]; groupBy: 'asesor' | 
 // ============================================================
 // VISTA RESUMEN: próximas entregas
 // ============================================================
-function ProximasEntregas({ rows }: { rows: PedidoRow[] }) {
+function ProximasEntregas({
+  rows,
+  onPedidoClick,
+}: {
+  rows: PedidoRow[]
+  onPedidoClick?: (key: string) => void
+}) {
   const upcoming = useMemo(() => {
     const seen = new Set<string>()
     return rows
@@ -335,12 +344,18 @@ function ProximasEntregas({ rows }: { rows: PedidoRow[] }) {
           Próximas entregas · 14 días
         </p>
       </div>
-      <div className="space-y-2">
+      <div className="space-y-1">
         {upcoming.map((r, i) => {
           const level = getSemaforoLevel(r.semaforo)
           const cfg   = SEM_CONFIG[level]
+          const key   = `${r.empresa}:${r.numero_siigo}`
           return (
-            <div key={i} className="flex items-center gap-3">
+            <div
+              key={i}
+              className={`flex items-center gap-3 px-1 py-1.5 rounded-lg -mx-1
+                ${onPedidoClick ? 'cursor-pointer hover:bg-blue-50/40 transition-colors' : ''}`}
+              onClick={onPedidoClick ? () => onPedidoClick(key) : undefined}
+            >
               <div className={`w-1 h-8 rounded-full ${SEM_BAR_COLOR[level]} shrink-0`} />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
@@ -380,7 +395,9 @@ export default function DashboardClient({
   batch: Batch | null
   profile: Profile | null
 }) {
-  const isGerente = profile?.role === 'gerente'
+  const isGerente  = profile?.role === 'gerente'
+  const isProgram  = profile?.role === 'programador'
+  const showAsesor = isGerente || isProgram  // keep for backwards compat in filters
   const [viewMode, setViewMode] = useState<ViewMode>('resumen')
 
   // ── Expandir/colapsar pedidos (vista tabla) ───────────────
@@ -404,15 +421,29 @@ export default function DashboardClient({
   }, [pedidos])
 
   // ── Estado de filtros ─────────────────────────────────────
-  const [empresa,   setEmpresa]   = useState<string>('todas')
-  const [asesorF,   setAsesorF]   = useState<string>('todos')
-  const [clienteF,  setClienteF]  = useState<string>('todos')
-  const [lineaF,    setLineaF]    = useState<string>('todas')
-  const [semFiltro, setSemFiltro] = useState<string>('todos')
+  const [empresaF,  setEmpresaF]  = useState<string[]>([])
+  const [asesorF,   setAsesorF]   = useState<string[]>([])
+  const [clienteF,  setClienteF]  = useState<string[]>([])
+  const [lineaF,    setLineaF]    = useState<string[]>([])
+  const [tipoIpF,   setTipoIpF]   = useState<string[]>([])
+  const [calibreF,  setCalibreF]  = useState<string[]>([])
+  const [semFiltro, setSemFiltro] = useState<string[]>([])
   const [busqueda,  setBusqueda]  = useState('')
   const [sortKey,   setSortKey]   = useState<SortKey>('semaforo')
   const [sortDir,   setSortDir]   = useState<SortDir>('asc')
   const [page,      setPage]      = useState(1)
+
+  // ── Impersonación ─────────────────────────────────────────
+  const { impersonateAs } = useImpersonation()
+
+  // ── Panel stack (asesor → pedido con navegación back) ─────
+  type Panel = { kind: 'asesor'; codigo: number; nombre: string } | { kind: 'pedido'; key: string }
+  const [panels, setPanels] = useState<Panel[]>([])
+  const topPanel = panels[panels.length - 1] ?? null
+
+  function pushPanel(p: Panel) { setPanels(prev => [...prev, p]) }
+  function popPanel()          { setPanels(prev => prev.slice(0, -1)) }
+  function closeAllPanels()    { setPanels([]) }
 
   // ── Listas de opciones únicas ─────────────────────────────
   const asesores = useMemo(() =>
@@ -429,19 +460,36 @@ export default function DashboardClient({
     [...new Set(rows.map(r => r.linea).filter(Boolean))].sort(),
   [rows])
 
+  const tiposIp = useMemo(() =>
+    [...new Map(rows
+      .filter(r => r.tipo_ip)
+      .map(r => [r.tipo_ip!, r.tipo_ip_desc ?? r.tipo_ip!])
+    ).entries()].sort((a, b) => a[0].localeCompare(b[0])),
+  [rows])
+
+  const calibres = useMemo(() =>
+    [...new Map(rows
+      .filter(r => r.calibre)
+      .map(r => [r.calibre!, r.calibre_desc ?? r.calibre!])
+    ).entries()].sort((a, b) => a[0].localeCompare(b[0])),
+  [rows])
+
+  // Derived flags considering impersonation
+  const effectiveIsGerente = isGerente && !impersonateAs
+  const showAsesorCol      = (isGerente || isProgram) && !impersonateAs
+
   // ── Filtrar ───────────────────────────────────────────────
   const filtered = useMemo(() => {
     const q = busqueda.toLowerCase()
     return rows.filter(r => {
-      if (empresa   !== 'todas' && r.empresa !== empresa) return false
-      if (asesorF   !== 'todos' && String(r.asesor_codigo) !== asesorF) return false
-      if (clienteF  !== 'todos' && String(r.cliente_nit)   !== clienteF) return false
-      if (lineaF    !== 'todas' && r.linea !== lineaF) return false
-      if (semFiltro === 'vencido'   && (r.semaforo === null || r.semaforo >= 0)) return false
-      if (semFiltro === 'urgente'   && (r.semaforo === null || r.semaforo < 0 || r.semaforo > 3)) return false
-      if (semFiltro === 'pronto'    && (r.semaforo === null || r.semaforo <= 3 || r.semaforo > 7)) return false
-      if (semFiltro === 'ok'        && (r.semaforo === null || r.semaforo <= 7)) return false
-      if (semFiltro === 'sin_fecha' && r.semaforo !== null) return false
+      if (impersonateAs && r.asesor_codigo !== impersonateAs.codigo) return false
+      if (empresaF.length > 0 && !empresaF.includes(r.empresa)) return false
+      if (asesorF.length  > 0 && !asesorF.includes(String(r.asesor_codigo))) return false
+      if (clienteF.length > 0 && !clienteF.includes(String(r.cliente_nit)))  return false
+      if (lineaF.length   > 0 && !lineaF.includes(r.linea))                  return false
+      if (tipoIpF.length  > 0 && !tipoIpF.includes(r.tipo_ip ?? ''))         return false
+      if (calibreF.length > 0 && !calibreF.includes(r.calibre ?? ''))        return false
+      if (semFiltro.length > 0 && !semFiltro.includes(getSemaforoLevel(r.semaforo))) return false
       if (q) {
         const hay = [r.cliente_nombre, r.numero_siigo, r.pedido_vendedor ?? '', r.descripcion, r.producto_codigo]
           .some(v => v.toLowerCase().includes(q))
@@ -449,7 +497,7 @@ export default function DashboardClient({
       }
       return true
     })
-  }, [rows, empresa, asesorF, clienteF, lineaF, semFiltro, busqueda])
+  }, [rows, impersonateAs, empresaF, asesorF, clienteF, lineaF, tipoIpF, calibreF, semFiltro, busqueda])
 
   // ── Ordenar ───────────────────────────────────────────────
   const sorted = useMemo(() => {
@@ -499,10 +547,11 @@ export default function DashboardClient({
   // ── KPIs ──────────────────────────────────────────────────
   const kpis = useMemo(() => {
     const valorTotal    = filtered.reduce((s, r) => s + r.valor_pendiente, 0)
+    const cantTotal     = filtered.reduce((s, r) => s + r.cantidad_pendiente, 0)
     const vencidos      = new Set(filtered.filter(r => r.semaforo !== null && r.semaforo < 0).map(r => r.numero_siigo)).size
     const urgentes      = new Set(filtered.filter(r => r.semaforo !== null && r.semaforo >= 0 && r.semaforo <= 3).map(r => r.numero_siigo)).size
     const pedidosUnicos = new Set(filtered.map(r => r.numero_siigo)).size
-    return { valorTotal, vencidos, urgentes, pedidosUnicos }
+    return { valorTotal, cantTotal, vencidos, urgentes, pedidosUnicos }
   }, [filtered])
 
   // ── Clases reutilizables (tabla) ──────────────────────────
@@ -520,7 +569,7 @@ export default function DashboardClient({
     )
   }
 
-  const colCount = isGerente ? 13 : 12
+  const colCount = (isGerente && !impersonateAs) ? 13 : 12
 
   // ── Sin datos ─────────────────────────────────────────────
   if (!batch) {
@@ -534,9 +583,45 @@ export default function DashboardClient({
     )
   }
 
-  const hasFilters = empresa !== 'todas' || asesorF !== 'todos' || clienteF !== 'todos' || lineaF !== 'todas' || semFiltro !== 'todos' || busqueda
+  const hasFilters = empresaF.length > 0 || asesorF.length > 0 || clienteF.length > 0 ||
+                     lineaF.length > 0 || tipoIpF.length > 0 || calibreF.length > 0 ||
+                     semFiltro.length > 0 || !!busqueda
+
+  // Active chips for multi-select filters
+  const activeChips = useMemo(() => {
+    const chips: { id: string; label: string; onRemove: () => void }[] = []
+    for (const v of empresaF) {
+      const label = v === 'sllrt' ? 'SELLARTE' : 'RV'
+      chips.push({ id: `e:${v}`, label, onRemove: () => { onFilterChange(() => setEmpresaF(prev => prev.filter(x => x !== v))); setPage(1) } })
+    }
+    for (const v of asesorF) {
+      const nom = asesores.find(([cod]) => String(cod) === v)?.[1] ?? v
+      chips.push({ id: `a:${v}`, label: nom.replace(/\s+/g,' ').trim(), onRemove: () => { onFilterChange(() => setAsesorF(prev => prev.filter(x => x !== v))); setPage(1) } })
+    }
+    for (const v of clienteF) {
+      const nom = clientes.find(([nit]) => String(nit) === v)?.[1] ?? v
+      chips.push({ id: `c:${v}`, label: nom.replace(/\s+/g,' ').trim(), onRemove: () => { onFilterChange(() => setClienteF(prev => prev.filter(x => x !== v))); setPage(1) } })
+    }
+    for (const v of lineaF) {
+      chips.push({ id: `l:${v}`, label: v, onRemove: () => { onFilterChange(() => setLineaF(prev => prev.filter(x => x !== v))); setPage(1) } })
+    }
+    for (const v of tipoIpF) {
+      const desc = tiposIp.find(([cod]) => cod === v)?.[1] ?? v
+      chips.push({ id: `t:${v}`, label: `${v} – ${desc}`, onRemove: () => { onFilterChange(() => setTipoIpF(prev => prev.filter(x => x !== v))); setPage(1) } })
+    }
+    for (const v of calibreF) {
+      const desc = calibres.find(([cod]) => cod === v)?.[1] ?? v
+      chips.push({ id: `k:${v}`, label: desc, onRemove: () => { onFilterChange(() => setCalibreF(prev => prev.filter(x => x !== v))); setPage(1) } })
+    }
+    for (const v of semFiltro) {
+      const label = SEM_CONFIG[v as SemaforoLevel]?.label ?? v
+      chips.push({ id: `s:${v}`, label, onRemove: () => { onFilterChange(() => setSemFiltro(prev => prev.filter(x => x !== v))); setPage(1) } })
+    }
+    return chips
+  }, [empresaF, asesorF, clienteF, lineaF, tipoIpF, calibreF, semFiltro, asesores, clientes, tiposIp, calibres]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
+    <>
     <div className="flex-1 overflow-auto">
       <div className="p-6 space-y-4 min-w-0">
 
@@ -576,7 +661,10 @@ export default function DashboardClient({
 
         {/* ── KPIs ── */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <KpiCard title="Valor pendiente"    value={cop(kpis.valorTotal)}             accent="blue"   icon={CheckCircle2} />
+          {isProgram
+            ? <KpiCard title="Total unidades"   value={kpis.cantTotal.toLocaleString('es-CO')} sub={`${filtered.length} líneas`} accent="blue" icon={CheckCircle2} />
+            : <KpiCard title="Valor pendiente"  value={cop(kpis.valorTotal)}                   accent="blue" icon={CheckCircle2} />
+          }
           <KpiCard title="Pedidos vencidos"   value={String(kpis.vencidos)}   sub="fecha pactada superada"  accent="red"    icon={TrendingDown} />
           <KpiCard title="Urgentes (≤3 días)" value={String(kpis.urgentes)}   sub="pedidos · días hábiles"  accent="orange" icon={Clock} />
           <KpiCard title="Pedidos únicos"     value={String(kpis.pedidosUnicos)} sub={`${filtered.length} líneas`} icon={Calendar} />
@@ -597,60 +685,109 @@ export default function DashboardClient({
               />
             </div>
 
-            <select value={empresa} onChange={e => onFilterChange(() => setEmpresa(e.target.value))}
-              className="px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-400">
-              <option value="todas">Todas las empresas</option>
-              <option value="sllrt">SELLARTE</option>
-              <option value="rv">RV</option>
-            </select>
+            <MultiFilter
+              label="Empresa"
+              options={[['sllrt', 'SELLARTE'], ['rv', 'RV']]}
+              selected={empresaF}
+              onChange={v => onFilterChange(() => setEmpresaF(v))}
+            />
 
-            {isGerente && (
-              <select value={asesorF} onChange={e => onFilterChange(() => setAsesorF(e.target.value))}
-                className="px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-400">
-                <option value="todos">Todos los asesores</option>
-                {asesores.map(([cod, nom]) => (
-                  <option key={cod} value={String(cod)}>{nom.replace(/\s+/g, ' ').trim()}</option>
-                ))}
-              </select>
+            {showAsesorCol && (
+              <MultiFilter
+                label="Asesor"
+                options={asesores.map(([cod, nom]) => [String(cod), nom.replace(/\s+/g, ' ').trim()])}
+                selected={asesorF}
+                onChange={v => onFilterChange(() => setAsesorF(v))}
+                placeholder="Buscar asesor…"
+              />
             )}
 
-            <select value={clienteF} onChange={e => onFilterChange(() => setClienteF(e.target.value))}
-              className="px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-400">
-              <option value="todos">Todos los clientes</option>
-              {clientes.map(([nit, nom]) => (
-                <option key={nit} value={String(nit)}>{nom.replace(/\s+/g, ' ').trim()}</option>
-              ))}
-            </select>
+            <MultiFilter
+              label="Cliente"
+              options={clientes.map(([nit, nom]) => [String(nit), nom.replace(/\s+/g, ' ').trim()])}
+              selected={clienteF}
+              onChange={v => onFilterChange(() => setClienteF(v))}
+              placeholder="Buscar cliente…"
+            />
 
-            <select value={lineaF} onChange={e => onFilterChange(() => setLineaF(e.target.value))}
-              className="px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-400">
-              <option value="todas">Todas las líneas</option>
-              {lineas.map(l => <option key={l} value={l}>{l}</option>)}
-            </select>
+            {lineas.length > 0 && (
+              <MultiFilter
+                label="Línea"
+                options={lineas.map(l => [l, l])}
+                selected={lineaF}
+                onChange={v => onFilterChange(() => setLineaF(v))}
+                placeholder="Buscar línea…"
+              />
+            )}
 
-            <select value={semFiltro} onChange={e => onFilterChange(() => setSemFiltro(e.target.value))}
-              className="px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-400">
-              <option value="todos">Semáforo: todos</option>
-              <option value="vencido">Vencidos</option>
-              <option value="urgente">Urgentes (≤3d)</option>
-              <option value="pronto">Próximos (4-7d)</option>
-              <option value="ok">A tiempo (&gt;7d)</option>
-              <option value="sin_fecha">Sin fecha pactada</option>
-            </select>
+            {tiposIp.length > 0 && (
+              <MultiFilter
+                label="Tipo IP"
+                options={tiposIp.map(([cod, desc]) => [cod, `${cod} – ${desc}`])}
+                selected={tipoIpF}
+                onChange={v => onFilterChange(() => setTipoIpF(v))}
+                placeholder="Buscar tipo…"
+              />
+            )}
+
+            {calibres.length > 0 && (
+              <MultiFilter
+                label="Calibre"
+                options={calibres.map(([cod, desc]) => [cod, desc])}
+                selected={calibreF}
+                onChange={v => onFilterChange(() => setCalibreF(v))}
+                placeholder="Buscar calibre…"
+              />
+            )}
+
+            <MultiFilter
+              label="Semáforo"
+              options={[
+                ['vencido',   'Vencidos'],
+                ['hoy',       'Vence hoy'],
+                ['urgente',   'Urgentes (≤3d)'],
+                ['pronto',    'Próximos (4-7d)'],
+                ['ok',        'A tiempo (>7d)'],
+                ['sin_fecha', 'Sin fecha'],
+              ]}
+              selected={semFiltro}
+              onChange={v => onFilterChange(() => setSemFiltro(v))}
+            />
 
             {hasFilters && (
               <button
                 onClick={() => {
-                  setEmpresa('todas'); setAsesorF('todos'); setClienteF('todos')
-                  setLineaF('todas'); setSemFiltro('todos'); setBusqueda(''); setPage(1)
+                  setEmpresaF([]); setAsesorF([]); setClienteF([])
+                  setLineaF([]); setTipoIpF([]); setCalibreF([])
+                  setSemFiltro([]); setBusqueda(''); setPage(1)
                   setExpandedPedidos(new Set())
                 }}
-                className="text-xs text-blue-600 hover:underline"
+                className="text-xs text-gray-400 hover:text-red-600 transition-colors"
               >
-                Limpiar filtros
+                Limpiar todo
               </button>
             )}
           </div>
+
+          {/* Active chips */}
+          {activeChips.length > 0 && (
+            <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-gray-100">
+              {activeChips.map(chip => (
+                <span
+                  key={chip.id}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full
+                    text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200"
+                >
+                  {chip.label}
+                  <button
+                    onClick={chip.onRemove}
+                    className="hover:text-blue-900 font-bold leading-none"
+                    aria-label={`Quitar filtro ${chip.label}`}
+                  >×</button>
+                </span>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* ── Vista Resumen ── */}
@@ -660,12 +797,22 @@ export default function DashboardClient({
 
             <div>
               <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
-                {isGerente ? 'Por asesor' : 'Por cliente'}
+                {effectiveIsGerente ? 'Por asesor' : 'Por cliente'}
               </p>
-              <GroupCards rows={filtered} groupBy={isGerente ? 'asesor' : 'cliente'} />
+              <GroupCards
+                rows={filtered}
+                groupBy={effectiveIsGerente ? 'asesor' : 'cliente'}
+                isProgram={isProgram}
+                onCardClick={effectiveIsGerente
+                  ? (codigo, nombre) => pushPanel({ kind: 'asesor', codigo, nombre })
+                  : undefined}
+              />
             </div>
 
-            <ProximasEntregas rows={filtered} />
+            <ProximasEntregas
+              rows={filtered}
+              onPedidoClick={key => pushPanel({ kind: 'pedido', key })}
+            />
           </div>
         )}
 
@@ -681,12 +828,12 @@ export default function DashboardClient({
                     <th className={thClass}>Empresa</th>
                     <Th col="pedido_vendedor"    label="# Vendedor" />
                     <Th col="numero_siigo"       label="# SIIGO" />
-                    {isGerente && <Th col="asesor_nombre" label="Asesor" />}
+                    {showAsesorCol && <Th col="asesor_nombre" label="Asesor" />}
                     <Th col="cliente_nombre"     label="Cliente" />
                     <Th col="descripcion"        label="Descripción" />
                     <Th col="linea"              label="Línea" />
                     <Th col="cantidad_pendiente" label="Cant. Pend." />
-                    <Th col="valor_pendiente"    label="Valor Pend." />
+                    {!isProgram && <Th col="valor_pendiente" label="Valor Pend." />}
                     <Th col="fecha_pedido"       label="F. Pedido" />
                     <Th col="fecha_pactada"      label="F. Pactada" />
                   </tr>
@@ -707,15 +854,18 @@ export default function DashboardClient({
 
                     return (
                       <Fragment key={gKey}>
-                        {/* ── Fila pedido (colapsable) ── */}
+                        {/* ── Fila pedido (colapsable / detail) ── */}
                         <tr
                           className="bg-gray-50/80 hover:bg-blue-50/40 cursor-pointer transition-colors"
-                          onClick={() => togglePedido(gKey)}
+                          onClick={() => pushPanel({ kind: 'pedido', key: gKey })}
                         >
-                          <td className="px-2 py-2.5 text-gray-400 text-center">
+                          <td
+                            className="px-2 py-2.5 text-gray-400 text-center"
+                            onClick={e => { e.stopPropagation(); togglePedido(gKey) }}
+                          >
                             {isExpanded
-                              ? <ChevronDown  className="w-3.5 h-3.5 inline" />
-                              : <ChevronRight className="w-3.5 h-3.5 inline" />
+                              ? <ChevronDown  className="w-3.5 h-3.5 inline hover:text-blue-600" />
+                              : <ChevronRight className="w-3.5 h-3.5 inline hover:text-blue-600" />
                             }
                           </td>
                           <td className={tdClass}><SemaforoBadge days={first.semaforo} /></td>
@@ -724,27 +874,29 @@ export default function DashboardClient({
                             {first.pedido_vendedor ?? <span className="text-gray-300">—</span>}
                           </td>
                           <td className={tdClass + ' font-mono text-xs font-semibold'}>{first.numero_siigo}</td>
-                          {isGerente && (
-                            <td className={tdClass + ' max-w-[140px] truncate'} title={first.asesor_nombre}>
+                          {showAsesorCol && (
+                            <td className={tdClass + ' max-w-[140px] truncate hidden sm:table-cell'} title={first.asesor_nombre}>
                               {first.asesor_nombre.replace(/\s+/g,' ').trim()}
                             </td>
                           )}
                           <td className={tdClass + ' max-w-[180px] truncate'} title={first.cliente_nombre}>
                             {first.cliente_nombre.replace(/\s+/g,' ').trim()}
                           </td>
-                          <td className="px-3 py-2.5">
+                          <td className="px-3 py-2.5 hidden sm:table-cell">
                             <span className="text-xs text-gray-400 italic">
                               {group.length} producto{group.length !== 1 ? 's' : ''}
                             </span>
                           </td>
-                          <td className="px-3 py-2.5 text-gray-300 text-xs">—</td>
+                          <td className="px-3 py-2.5 text-gray-300 text-xs hidden sm:table-cell">—</td>
                           <td className={tdClass + ' text-right tabular-nums font-medium'}>
                             {totalCantidad.toLocaleString('es-CO')}
                           </td>
-                          <td className={tdClass + ' text-right tabular-nums font-semibold'}>
-                            {cop(totalValor)}
-                          </td>
-                          <td className={tdClass + ' text-gray-400 text-xs'}>{fmtDate(first.fecha_pedido)}</td>
+                          {!isProgram && (
+                            <td className={tdClass + ' text-right tabular-nums font-semibold'}>
+                              {cop(totalValor)}
+                            </td>
+                          )}
+                          <td className={tdClass + ' text-gray-400 text-xs hidden sm:table-cell'}>{fmtDate(first.fecha_pedido)}</td>
                           <td className={tdClass + ' text-xs'}>{fmtDate(first.fecha_pactada)}</td>
                         </tr>
 
@@ -756,20 +908,20 @@ export default function DashboardClient({
                             </td>
                             <td className="px-3 py-2" />
                             <td className="px-3 py-2" />
-                            <td className="px-3 py-2 text-xs text-gray-400 font-mono">
+                            <td className="px-3 py-2 text-xs text-gray-400 font-mono hidden sm:table-cell">
                               {line.referencia || '—'}
                             </td>
-                            <td className="px-3 py-2 text-xs text-gray-500 font-mono">
+                            <td className="px-3 py-2 text-xs text-gray-500 font-mono hidden sm:table-cell">
                               {line.producto_codigo}
                             </td>
-                            {isGerente && <td className="px-3 py-2" />}
+                            {showAsesorCol && <td className="px-3 py-2 hidden sm:table-cell" />}
                             <td className="px-3 py-2" />
-                            <td className="px-3 py-2 text-sm text-gray-700 max-w-[200px]">
+                            <td className="px-3 py-2 text-sm text-gray-700 max-w-[200px] hidden sm:table-cell">
                               <span className="truncate block" title={line.descripcion}>
                                 {line.descripcion.replace(/\s+/g,' ').trim()}
                               </span>
                             </td>
-                            <td className="px-3 py-2">
+                            <td className="px-3 py-2 hidden sm:table-cell">
                               {line.linea
                                 ? <span className="text-xs px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">{line.linea}</span>
                                 : <span className="text-gray-300 text-xs">—</span>
@@ -778,10 +930,12 @@ export default function DashboardClient({
                             <td className="px-3 py-2 text-sm text-gray-600 text-right tabular-nums">
                               {line.cantidad_pendiente.toLocaleString('es-CO')}
                             </td>
-                            <td className="px-3 py-2 text-sm text-gray-600 text-right tabular-nums">
-                              {cop(line.valor_pendiente)}
-                            </td>
-                            <td className="px-3 py-2" />
+                            {!isProgram && (
+                              <td className="px-3 py-2 text-sm text-gray-600 text-right tabular-nums">
+                                {cop(line.valor_pendiente)}
+                              </td>
+                            )}
+                            <td className="px-3 py-2 hidden sm:table-cell" />
                             <td className="px-3 py-2" />
                           </tr>
                         ))}
@@ -826,5 +980,67 @@ export default function DashboardClient({
 
       </div>
     </div>
+
+    {/* ── PedidoDetailPanel ── */}
+    {/* ── Panel stack ── */}
+    {topPanel?.kind === 'asesor' && (
+      <AsesorDetailPanel
+        asesorCodigo={topPanel.codigo}
+        asesorNombre={topPanel.nombre}
+        rows={rows as AsesorPanelRow[]}
+        onClose={closeAllPanels}
+        onPedidoClick={key => pushPanel({ kind: 'pedido', key })}
+      />
+    )}
+
+    {topPanel?.kind === 'pedido' && (() => {
+      const group = rows
+        .reduce<PedidoRow[][]>((acc, r) => {
+          const k = `${r.empresa}:${r.numero_siigo}`
+          if (k !== topPanel.key) return acc
+          const existing = acc.find(g => `${g[0].empresa}:${g[0].numero_siigo}` === k)
+          if (existing) { existing.push(r) } else { acc.push([r]) }
+          return acc
+        }, [])
+        .find(g => `${g[0].empresa}:${g[0].numero_siigo}` === topPanel.key)
+      if (!group) return null
+      const first = group[0]
+      const pedido: PedidoDetail = {
+        empresa:         first.empresa,
+        numero_siigo:    first.numero_siigo,
+        pedido_vendedor: first.pedido_vendedor,
+        asesor_nombre:   first.asesor_nombre,
+        cliente_nombre:  first.cliente_nombre,
+        fecha_pactada:   first.fecha_pactada,
+        semaforo:        first.semaforo,
+        cantidad:        group.reduce((s, r) => s + r.cantidad_pendiente, 0),
+        nlineas:         group.length,
+      }
+      const lines: PedidoLine[] = group.map(r => ({
+        sec:                   r.sec,
+        producto_codigo:       r.producto_codigo,
+        descripcion:           r.descripcion,
+        linea:                 r.linea,
+        tipo_ip:               r.tipo_ip,
+        tipo_ip_desc:          r.tipo_ip_desc,
+        calibre:               r.calibre,
+        calibre_desc:          r.calibre_desc,
+        cantidad_pedida:       r.cantidad_pedida,
+        cantidad_pendiente:    r.cantidad_pendiente,
+        valor_pendiente:       r.valor_pendiente,
+        fecha_entrega_parcial: r.fecha_entrega_parcial,
+      }))
+      const hasBack = panels.length > 1
+      return (
+        <PedidoDetailPanel
+          pedido={pedido}
+          lines={lines}
+          onClose={closeAllPanels}
+          onBack={hasBack ? popPanel : undefined}
+          isProgram={isProgram}
+        />
+      )
+    })()}
+    </>
   )
 }

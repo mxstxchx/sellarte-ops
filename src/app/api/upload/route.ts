@@ -105,6 +105,10 @@ export async function POST(request: NextRequest) {
     fecha_pedido:          p.fecha_pedido ?? null,
     fecha_pactada:         p.fecha_pactada ?? null,
     pedido_vendedor:       p.pedido_vendedor,
+    tipo_ip:               p.tipo_ip,
+    tipo_ip_desc:          p.tipo_ip_desc,
+    calibre:               p.calibre,
+    calibre_desc:          p.calibre_desc,
     upload_batch_id:       batchId,
   }))
 

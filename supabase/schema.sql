@@ -12,7 +12,7 @@ create table public.app_users (
   id            uuid primary key references auth.users(id) on delete cascade,
   email         text not null unique,
   full_name     text not null,
-  role          text not null check (role in ('gerente', 'asesor', 'cargador')),
+  role          text not null check (role in ('gerente', 'asesor', 'cargador', 'programador')),
   asesor_codigo integer,   -- código SIIGO del asesor (solo role='asesor')
   created_at    timestamptz default now()
 );
@@ -67,6 +67,12 @@ create policy "upload_batches: select cargador (propios)"
     and uploaded_by = auth.uid()
   );
 
+create policy "upload_batches: select programador"
+  on public.upload_batches for select
+  using (
+    exists (select 1 from public.app_users u where u.id = auth.uid() and u.role = 'programador')
+  );
+
 create policy "upload_batches: update (para actualizar status)"
   on public.upload_batches for update
   using (uploaded_by = auth.uid());
@@ -116,6 +122,12 @@ create table public.pedidos (
   fecha_pactada         date,                                -- del auxiliar (col X) — base del semáforo
   pedido_vendedor       text,                                -- de Control de Pedidos (col A)
 
+  -- Enriquecimiento de código de producto (pos 0-2 = TIPO_IP, pos 5-6 = CALIBRE)
+  tipo_ip               text,
+  tipo_ip_desc          text,
+  calibre               text,
+  calibre_desc          text,
+
   -- Metadata
   upload_batch_id       uuid not null references public.upload_batches(id) on delete cascade,
   created_at            timestamptz default now(),
@@ -149,6 +161,15 @@ create policy "pedidos: asesor ve los suyos"
         and u.role = 'asesor'
         and u.asesor_codigo = pedidos.asesor_codigo
     )
+  );
+
+-- Asesor: solo sus pedidos (por asesor_codigo) — ya existe arriba
+
+-- Programador: todos los pedidos (semáforo/cantidades sin valores)
+create policy "pedidos: programador ve todo"
+  on public.pedidos for select
+  using (
+    exists (select 1 from public.app_users u where u.id = auth.uid() and u.role = 'programador')
   );
 
 -- Insert solo desde server (con service role / secret key en API Route)

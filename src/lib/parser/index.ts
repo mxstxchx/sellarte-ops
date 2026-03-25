@@ -27,6 +27,11 @@ export interface PedidoParsed {
   fecha_pedido: Date | null    // del archivo auxiliar
   fecha_pactada: Date | null   // del archivo auxiliar
   pedido_vendedor: string | null // de Control de Pedidos
+  // Enriquecimiento de código de producto (decodificado desde Excel TIPO IP / CALIBRE)
+  tipo_ip: string
+  tipo_ip_desc: string
+  calibre: string
+  calibre_desc: string
 }
 
 export interface ParseInput {
@@ -49,6 +54,236 @@ export interface ParseResult {
 
 /** Filas 1-6 son encabezado de SIIGO; fila 7 es header de columnas; datos desde fila 8 */
 const SIIGO_DATA_START = 7 // índice 0-based
+
+// ============================================================
+// MAPPINGS DE ENRIQUECIMIENTO DE PRODUCTO
+// Fuente: itera_backorder.xlsx — hojas "TIPO IP" y "CALIBRE"
+// Formato producto_codigo: AAABBCCDDEEFF (13 dígitos)
+//   AAA (0-2) = TIPO IP   BB (3-4) = COLOR   CC (5-6) = CALIBRE
+//   DD (7-8)  = ESTAMPADO  EE (9-10) = CARACTERÍSTICA  FF (11-12) = TALLA
+// ============================================================
+
+/** Primeros 3 dígitos del código → descripción de TIPO IP (178 entradas) */
+const TIPO_IP_MAP: Record<string, string> = {
+  '601': 'GABARDINA ADULTO BOLSILLOS PARCHE',
+  '604': 'GABARDINA UNISEX SILIC CON EMPAQUE INDIV',
+  '602': 'GABRDINA INFANTIL',
+  '603': 'GABÁN DAMA SILIC CON CINTURÓN',
+  '605': 'GABARDINA ESPECIAL',
+  '606': 'ABRIGO BOLSILLOS PARCHE',
+  '608': 'ABRIGO BOLSILLOS PARCHE C/REFL',
+  '888': 'ABRIGO BOLSILLOS PARCHE C/REFL C-18L RT',
+  '607': 'ABRIGO ESPECIAL',
+  '609': 'ABRIGO ESPECIAL C/REFL',
+  '610': 'CAPA ADULTO CORTE LIMPIO',
+  '611': 'CAPA INFANTIL',
+  '612': 'CAPA JUNIOR',
+  '862': 'CAPA ADULTO SILI C/BR PECHO Y REFL DOBLADILLAD',
+  '614': 'CAPA REDONDA SILIC UNISEX C/MANGAS',
+  '615': 'CAPA ADULTO',
+  '863': 'CAPA ADULTO C-18L RT',
+  '616': 'CAPA ADULTO C/REFL',
+  '617': 'CAPA GANADERA',
+  '618': 'CAPA GANADERA C/REFL',
+  '619': 'CAPA LLANERA',
+  '620': 'CAPA LLANERA C/REFL',
+  '861': 'CAPA LLANERA C/ CUELLO',
+  '613': 'CAPA VAQUERÍA',
+  '621': 'CAPA CAFETERA',
+  '622': 'CAPA VAQUERO C/ CUELLO Y BROCHE',
+  '623': 'CAPA VAQUERO TIPO RUANA C/ ELÁSTICO',
+  '624': 'CAPA ESPECIAL',
+  '625': 'CAPA ESPECIAL C/REFL',
+  '638': 'CHAQUETA TIFÓN',
+  '639': 'CHAQUETA TIFÓN C/REFL',
+  '640': 'CHAQUETA TORMENTA',
+  '641': 'CHAQUETA TORMENTA C/REFL',
+  '868': 'CHAQUETA TORMENTA C/REFL C-18L RT',
+  '642': 'CHAQUETA TRUENO',
+  '643': 'CHAQUETA TRUENO C/REFL',
+  '644': 'CHAQUETA TORNADO C/REFL',
+  '645': 'CHAQUETA TORNADO DAMA C/REFL',
+  '646': 'CHAQUETA CICLÓN C/REFL',
+  '860': 'CHAQUETA CICLÓN MORRALERA C/REFL',
+  '647': 'CHAQUETA RAYO C/REFL SILIC',
+  '648': 'CHAQUETA SPORT C/REFL SILIC',
+  '649': 'CHAQUETA GLOW C/REFL SILIC',
+  '650': 'CHAQUETA BRISA C/REFL',
+  '651': 'CHAQUETA TIFÓN INFANTIL',
+  '652': 'CHAQUETA ECOPOLI C/REFL',
+  '653': 'CHAQUETA ESCARABAJO C/REFL SILIC',
+  '654': 'CHAQUETA ESPECIAL',
+  '655': 'CHAQUETA ESPECIAL C/REFL',
+  '656': 'PANTALÓN',
+  '657': 'PANTALÓN C/REFL',
+  '658': 'PANTALÓN RAYO C/REFL SILIC',
+  '659': 'PANTALÓN SPORT C/REFL SILIC',
+  '660': 'PANTALÓN GLOW C/REFL SILIC',
+  '661': 'PANTALÓN BRISA C/REFL',
+  '662': 'PANTALÓN ESPECIAL',
+  '663': 'PANTALÓN ESPECIAL C/REFL',
+  '628': 'DELANTAL PEQUEÑO',
+  '629': 'DELANTAL MEDIANO',
+  '630': 'DELANTAL GRANDE',
+  '626': 'DELANTAL 80X130',
+  '627': 'DELANTAL 80X140',
+  '878': 'DELANTAL OTRA MEDIDA',
+  '634': 'DELANTAL PEQUEÑO REFORZADO',
+  '635': 'DELANTAL MEDIANO REFORZADO',
+  '636': 'DELANTAL GRANDE REFORZADO',
+  '879': 'DELANTAL 80X130 REFORZADO',
+  '880': 'DELANTAL 80X140 REFORZADO',
+  '884': 'DELANTAL OTRA MEDIDA REFORZADO',
+  '631': 'DELANTAL CRUZADO PEQUEÑO',
+  '632': 'DELANTAL CRUZADO MEDIANO',
+  '633': 'DELANTAL CRUZADO GRANDE',
+  '881': 'DELANTAL CRUZADO 80X130',
+  '882': 'DELANTAL CRUZADO 80X140',
+  '883': 'DELANTAL CRUZADO OTRA MEDIDA',
+  '856': 'DELANTAL CRUZADO REFORZADO PEQUEÑO',
+  '857': 'DELANTAL CRUZADO REFORZADO MEDIANO',
+  '858': 'DELANTAL CRUZADO REFORZADO GRANDE',
+  '885': 'DELANTAL CRUZADO REFORZADO 80x140',
+  '886': 'DELANTAL CRUZADO REFORZADO 80x130',
+  '887': 'DELANTAL CRUZADO REFORZADO OTRA MEDIDA',
+  '637': 'DELANTAL FORMA ESPECIAL',
+  '851': 'DELANTAL BANANERO',
+  '852': 'DELANTAL CARNICERO',
+  '853': 'DELANTAL GABACHA',
+  '664': 'CONJUNTO TIFÓN 2P',
+  '892': 'CONJUNTO TIFÓN 2P C-18L RT',
+  '665': 'CONJUNTO TIFÓN 2P C/REFL',
+  '893': 'CONJUNTO TIFÓN 2P C/REFL C-18L RT',
+  '666': 'CONJUNTO TIFÓN ESPECIAL',
+  '667': 'CONJUNTO TIFÓN ESPECIAL OTRO MATERIAL',
+  '668': 'CONJUNTO TORMENTA 2P',
+  '866': 'CONJUNTO TORMENTA 2P C-18L RT',
+  '669': 'CONJUNTO TORMENTA 2P C/REFL',
+  '867': 'CONJUNTO TORMENTA 2P C/REFL C-18L RT',
+  '889': 'CONJUNTO TORMENTA 3P',
+  '895': 'CONJUNTO TORMENTA 3P C-18L RT',
+  '890': 'CONJUNTO TORMENTA 3P C/REFL',
+  '891': 'CONJUNTO TORMENTA 4P',
+  '896': 'CONJUNTO TORMENTA 4P C-18L RT',
+  '859': 'CONJUNTO TORMENTA 4P C/REFL',
+  '869': 'CONJUNTO TORMENTA 4P C/REFL C-18L RT',
+  '670': 'CONJUNTO TORMENTA ESPECIAL',
+  '671': 'CONJUNTO TORMENTA ESPECIAL OTRO MATERIAL',
+  '672': 'CONJUNTO TRUENO 2P',
+  '673': 'CONJUNTO TRUENO 2P C/REFL',
+  '897': 'CONJUNTO TRUENO 2P C/REFL C-18L RT',
+  '674': 'CONJUNTO TRUENO 4P C/REFL',
+  '675': 'CONJUNTO TRUENO ESPECIAL',
+  '676': 'CONJUNTO TRUENO ESPECIAL C/REFL',
+  '677': 'CONJUNTO CHAQUETA TIFÓN + OVEROL',
+  '678': 'CONJUNTO CHAQUETA TORMENTA + OVEROL',
+  '679': 'CONJUNTO ESPECIAL CHAQUETA + OVEROL',
+  '680': 'CONJUNTO ESP CHAQUETA OVEROL C/REFL 2XL',
+  '681': 'CONJUNTO TORNADO 2P C/REFL',
+  '682': 'CONJUNTO TORNADO 3P C/REFL',
+  '683': 'CONJUNTO TORNADO 4P C/REFL',
+  '684': 'CONJUNTO TORNADO DAMA 2P C/REFL',
+  '685': 'CONJUNTO TORNADO DAMA 3P C/REFL',
+  '686': 'CONJUNTO TORNADO DAMA 4P C/REFL',
+  '894': 'CONJUNTO MOTO OVERSIZE 2P C/REFL',
+  '687': 'CONJUNTO CICLÓN 2P C/REFL',
+  '688': 'CONJUNTO CICLÓN 3P C/REFL',
+  '695': 'CONJUNTO CICLÓN MORRALERO 2P C/REFL',
+  '696': 'CONJUNTO CICLÓN MORRALERO 3P C/REFL',
+  '801': 'CONJUNTO DEPORTIVO SILIC 2P C/REFL',
+  '689': 'CONJUNTO RAYO 2P C/REFL SILIC',
+  '690': 'CONJUNTO RAYO 3P C/REFL SILIC',
+  '691': 'CONJUNTO RAYO 4P C/REFL SILIC',
+  '692': 'CONJUNTO SPORT 2P C/REFL SILIC',
+  '693': 'CONJUNTO SPORT 3P C/REFL SILIC',
+  '694': 'CONJUNTO SPORT 4P C/REFL SILIC',
+  '697': 'CONJUNTO GLOW C/REFL SILIC',
+  '698': 'CONJUNTO BRISA 2P C/REFL',
+  '699': 'CONJUNTO BRISA 3P C/REFL',
+  '800': 'CONJUNTO TIFÓN INFANTIL 2P',
+  '802': 'CONJUNTO ECOPOLI C/REFL',
+  '803': 'CONJUNTO PROTECTCROSS C/REFL',
+  '854': 'CONJUNTO OVEROL ENTERIZO C/CUBRECALZADO',
+  '804': 'OVEROL CON PECHERA',
+  '805': 'OVEROL CON PECHERA C/REFL',
+  '806': 'OVEROL CON PECHERA ESPECIAL',
+  '807': 'OVEROL CON PECHERA ESPECIAL C/REFL',
+  '808': 'OVEROL ENTERIZO',
+  '809': 'OVEROL ENTERIZO C/REFL',
+  '810': 'OVEROL FONTANERO SIN PUNT',
+  '811': 'OVEROL FONTANERO CON PUNT',
+  '812': 'OVEROL FONTANERO ESPECIAL',
+  '813': 'OVEROL ESCAFANDRA SIN PUNT',
+  '814': 'OVEROL ESCAFANDRA CON PUNT',
+  '815': 'OVEROL ESCAFANDRA ESPECIAL',
+  '830': 'ZAPATONES MOTORIZADOS CAÑA ALTA C/REFL',
+  '827': 'ZAPATONES DAMA SILIC',
+  '828': 'ZAPATONES CICLÓN',
+  '829': 'ZAPATONES TORNADO',
+  '831': 'PROTECTORES CALZADO',
+  '832': 'ZAPATONES O PROTECT CALZADO ESP',
+  '836': 'PIJAMA MOTO PEQUEÑA',
+  '837': 'PIJAMA MOTO GRANDE',
+  '838': 'PIJAMA MOTO EXTRAGRANDE',
+  '839': 'PIJAMA CUBREMONTACARGAS',
+  '840': 'PIJAMA ESPECIAL',
+  '842': 'KIT DE ESTADIO INFANTIL',
+  '843': 'KIT DE ESTADIO ADULTO',
+  '844': 'CUBRE MORRAL',
+  '846': 'PLACA REFLECTIVA',
+  '847': 'REFLECTIVO PARA MALETA',
+  '849': 'BOLSO PARA CONJUNTO',
+  '850': 'CANGURO PLANO',
+  '833': 'MANGAS CON HEBILLA',
+  '834': 'MANGAS CON DOBLE RESORTE',
+  '835': 'MANGAS ESPECIALES',
+  '855': 'ZAPATONES ESTÉRILES',
+  '841': 'COJÍN CARNICERO',
+  '845': 'CUBRE SOMBRERO',
+  '864': 'BRAZALETE BRIGADISTA C/REFL IMPRESO',
+  '865': 'CAPUCHA MONJA',
+  '899': 'OTROS ESPECIALES',
+}
+
+/** Dígitos 5-6 del código → descripción de CALIBRE (19 entradas) */
+const CALIBRE_MAP: Record<string, string> = {
+  '25': 'C-4',
+  '39': 'C-14',
+  '40': 'C-16',
+  '41': 'C-18',
+  '42': 'C-20',
+  '43': 'C-22',
+  '44': 'C-25',
+  '45': 'SILC C-8',
+  '47': 'VINI-CONC',
+  '48': 'VINI-LON',
+  '49': 'AGRO-CONC',
+  '50': 'AGRO-LON',
+  '51': 'AGROFLEX',
+  '52': 'FRIGOFLEX',
+  '53': 'REFLECTIVO',
+  '54': 'SILC C-4',
+  '55': 'CLEAR',
+  '56': 'DOBLEFAZ',
+  '99': 'OTRO MATERIAL',
+}
+
+function parseCodigo(codigo: string): {
+  tipo_ip: string; tipo_ip_desc: string
+  calibre: string; calibre_desc: string
+} {
+  if (codigo.length < 7) {
+    return { tipo_ip: '', tipo_ip_desc: '', calibre: '', calibre_desc: '' }
+  }
+  const tipo_ip = codigo.slice(0, 3)
+  const calibre  = codigo.slice(5, 7)
+  return {
+    tipo_ip,
+    tipo_ip_desc: TIPO_IP_MAP[tipo_ip] ?? '',
+    calibre,
+    calibre_desc:  CALIBRE_MAP[calibre] ?? '',
+  }
+}
 
 /** Tabla CONVENCIONES_LÍNEA: primer dígito del código de producto → línea */
 const CONVENCIONES: Record<string, string> = {
@@ -301,6 +536,7 @@ function parsePendientes(
 
     const productoCodigo = toStr(row[COL_P.PRODUCTO])
     const linea = CONVENCIONES[productoCodigo.charAt(0)] ?? ''
+    const { tipo_ip, tipo_ip_desc, calibre, calibre_desc } = parseCodigo(productoCodigo)
 
     const key = normDoc(row[COL_P.DOCUMENTO])
     const aux = auxMap.get(key)
@@ -337,6 +573,10 @@ function parsePendientes(
       fecha_pedido:          aux?.fechaPedido ?? null,
       fecha_pactada:         aux?.fechaPactada ?? null,
       pedido_vendedor:       pedidoVendedor,
+      tipo_ip,
+      tipo_ip_desc,
+      calibre,
+      calibre_desc,
     })
   }
 
