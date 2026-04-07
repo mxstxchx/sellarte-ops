@@ -486,7 +486,7 @@ export default function DashboardClient({
   const filtered = useMemo(() => {
     const q = busqueda.toLowerCase()
     return rows.filter(r => {
-      if (impersonateAs && r.asesor_codigo !== impersonateAs.codigo) return false
+      if (impersonateAs && impersonateAs.codigo !== null && r.asesor_codigo !== impersonateAs.codigo) return false
       if (empresaF.length > 0 && !empresaF.includes(r.empresa)) return false
       if (asesorF.length  > 0 && !asesorF.includes(String(r.asesor_codigo))) return false
       if (clienteF.length > 0 && !clienteF.includes(String(r.cliente_nit)))  return false

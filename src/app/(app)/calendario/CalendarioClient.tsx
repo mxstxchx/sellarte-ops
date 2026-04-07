@@ -281,7 +281,7 @@ export default function CalendarioClient({
   const filteredPedidos = useMemo(() => {
     const q = busqueda.toLowerCase()
     return uniquePedidos.filter(p => {
-      if (impersonateAs && p.asesor_codigo !== impersonateAs.codigo) return false
+      if (impersonateAs && impersonateAs.codigo !== null && p.asesor_codigo !== impersonateAs.codigo) return false
       if (empresaF.length  > 0 && !empresaF.includes(p.empresa)) return false
       if (asesorF.length   > 0 && !asesorF.includes(String(p.asesor_codigo))) return false
       if (clienteF.length  > 0 && !clienteF.includes(p.cliente_nombre)) return false
